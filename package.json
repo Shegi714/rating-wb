@@ -1,16 +1,13 @@
 {
-  "name": "rating-wb",
+  "name": "wb-feedback-analyzer",
   "version": "1.0.0",
-  "description": "",
   "main": "index.js",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
-    "googleapis": "^148.0.0",
-    "node-fetch": "^3.3.2"
+    "googleapis": "^124.0.0",
+    "node-fetch": "^2.6.11"
   }
 }

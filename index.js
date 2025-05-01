@@ -1,83 +1,108 @@
 const { google } = require('googleapis');
 const fetch = require('node-fetch');
 const fs = require('fs');
+const path = require('path');
 
-// Загружаем креденшлы
+const CREDENTIALS_PATH = path.join(__dirname, 'temp_credentials.json');
+fs.writeFileSync(CREDENTIALS_PATH, process.env.GCP_CREDENTIALS);
+
 const auth = new google.auth.GoogleAuth({
-  keyFile: 'credentials.json',
+  keyFile: CREDENTIALS_PATH,
   scopes: ['https://www.googleapis.com/auth/spreadsheets']
 });
 
-// Настройки
-const SPREADSHEET_ID = 'your_spreadsheet_id_here';
+const SPREADSHEET_ID = 'ВСТАВЬ_СЮДА_ID_ТАБЛИЦЫ'; // <- замени на свой
 
 async function main() {
   const client = await auth.getClient();
   const sheets = google.sheets({ version: 'v4', auth: client });
 
-  const sheetList = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
-  const tabs = sheetList.data.sheets.map(s => s.properties.title);
+  const sheetMeta = await sheets.spreadsheets.get({ spreadsheetId: SPREADSHEET_ID });
+  const sheetTitles = sheetMeta.data.sheets.map(s => s.properties.title);
 
-  for (const sheetName of tabs) {
+  for (const title of sheetTitles) {
+    console.log(`Обрабатывается лист: ${title}`);
+
     const tokenResp = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!B1`,
+      range: `${title}!B1`
     });
-    const token = tokenResp.data.values?.[0]?.[0];
-    if (!token) continue;
+    const token = tokenResp.data.values?.[0]?.[0] || '';
+    if (!token) {
+      console.log(`Пропуск листа "${title}" — токен не найден.`);
+      continue;
+    }
 
-    const articulesResp = await sheets.spreadsheets.values.get({
+    const nmidResp = await sheets.spreadsheets.values.get({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!A2:A`
+      range: `${title}!A2:A`
     });
-    const articules = articulesResp.data.values || [];
+    const nmidValues = nmidResp.data.values || [];
 
     const results = [];
 
-    for (const [idx, [nmid]] of articules.entries()) {
-      if (!nmid) {
+    for (let i = 0; i < nmidValues.length; i++) {
+      const nmId = nmidValues[i][0];
+      if (!nmId) {
         results.push(['', '']);
         continue;
       }
 
-      const url = `https://feedbacks-api.wildberries.ru/api/v1/feedbacks?isAnswered=true&nmId=${nmid}&take=5000&skip=0&order=dateDesc`;
-
+      const url = `https://feedbacks-api.wildberries.ru/api/v1/feedbacks?isAnswered=true&nmId=${nmId}&take=5000&skip=0&order=dateDesc`;
       try {
-        const res = await fetch(url, {
+        const response = await fetch(url, {
+          method: 'GET',
           headers: {
             'Accept': 'application/json',
             'Authorization': token
           }
         });
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
+        if (!response.ok) {
+          console.warn(`Ошибка ${response.status} для nmId ${nmId}`);
+          results.push([`HTTP ${response.status}`, '']);
+          await delay(1000);
+          continue;
+        }
+
+        const json = await response.json();
         const data = json.data || {};
         const total = (data.countUnanswered || 0) + (data.countArchive || 0);
-        const feedbacks = data.feedbacks || [];
+        const feedbacks = Array.isArray(data.feedbacks) ? data.feedbacks : [];
 
-        let avg = 0;
+        let avg = '';
         if (feedbacks.length > 0) {
-          const sum = feedbacks.reduce((a, b) => a + (b.productValuation || 0), 0);
-          avg = +(sum / feedbacks.length).toFixed(2);
+          const sum = feedbacks.reduce((acc, fb) => acc + (fb.productValuation || 0), 0);
+          avg = Math.round((sum / feedbacks.length) * 100) / 100;
         }
 
         results.push([total, avg]);
-      } catch (err) {
-        console.error(`Error for nmId ${nmid}:`, err.message);
-        results.push(['error', '']);
+      } catch (e) {
+        console.error(`Ошибка при получении данных для ${nmId}:`, e.message);
+        results.push(['Fetch error', '']);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000)); // пауза 1 секунда
+      await delay(1000); // соблюдение лимита 1 запрос/сек
     }
 
+    // Запись результатов обратно в столбцы B и C
     await sheets.spreadsheets.values.update({
       spreadsheetId: SPREADSHEET_ID,
-      range: `${sheetName}!B2:C${results.length + 1}`,
+      range: `${title}!B2`,
       valueInputOption: 'RAW',
-      requestBody: { values: results }
+      requestBody: {
+        values: results
+      }
     });
+
+    console.log(`Обработка листа "${title}" завершена.`);
   }
+
+  fs.unlinkSync(CREDENTIALS_PATH); // удаление временного файла
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 main().catch(console.error);
