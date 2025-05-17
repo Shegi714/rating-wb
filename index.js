@@ -11,7 +11,7 @@ const auth = new google.auth.GoogleAuth({
   scopes: ['https://www.googleapis.com/auth/spreadsheets']
 });
 
-const SPREADSHEET_ID = '1sypiUJjcrhH0rv6QuuO1PlEAXIlx2WB_aDi03hfzBF4'; // <- замени на свой
+const SPREADSHEET_ID = process.env.SPREADSHEET_ID; // ссылка на таблицу
 
 async function main() {
   const client = await auth.getClient();
